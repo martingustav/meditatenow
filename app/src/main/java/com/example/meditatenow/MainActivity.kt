@@ -154,7 +154,7 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
                 },
                 confirmButton = {
                     Button(onClick = {
-                        sessionLengthSeconds = tempMinutes * 60 + tempSeconds
+                        sessionLengthSeconds = toTotalSeconds(tempMinutes, tempSeconds)
                         secondsRemaining = sessionLengthSeconds
                         showDialog = false
                     }) {
