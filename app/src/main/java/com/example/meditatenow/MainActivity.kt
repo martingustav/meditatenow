@@ -27,7 +27,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
-import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
 
 class MainActivity : ComponentActivity() {
@@ -55,7 +54,6 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
     var hasStarted by remember { mutableStateOf(false) } // Keeps track of whether timer has been started yet
     var isRunning by remember { mutableStateOf(false) } // Keeps track of whether timer is running right now
     var secondsRemaining by remember { mutableIntStateOf(600) }
-    val minutes = secondsRemaining / 60
 
     // Restarts whenever isRunning changes; counts down while running and time remains
     LaunchedEffect(isRunning) {
@@ -72,7 +70,7 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
     ) {
         // Timer text
         Text(
-            text = String.format(Locale.getDefault(), "%02d:%02d", minutes, secondsRemaining % 60),
+            text = formatTime(secondsRemaining),
             fontSize = 64.sp,
             fontWeight = FontWeight.Bold
         )
