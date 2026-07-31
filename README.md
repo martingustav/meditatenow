@@ -8,6 +8,7 @@ A simple meditation timer app for Android written in Kotlin, built as a learning
 - [x] Start/Pause/Resume/End session controls
 - [x] In-app completion message on session end
 - [ ] Session start and end sounds
+- [ ] Optional pre-session countdown
 - [ ] Session end system notification
 - [ ] Save and reuse session configurations
 - [ ] Session history / streak tracking
