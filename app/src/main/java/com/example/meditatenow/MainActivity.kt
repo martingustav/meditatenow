@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,7 +37,7 @@ import com.example.meditatenow.ui.theme.MeditateNowTheme
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
 
-val COMPLETION_SOUNDS = listOf(
+val SOUNDS = listOf(
     "Small Bell" to R.raw.small_bell,
     "Temple Bell" to R.raw.temple_bell,
     "Tibetan Bell" to R.raw.tibetan_bell
@@ -46,11 +47,30 @@ val COMPLETION_SOUNDS = listOf(
  * Plays the given sound resource once, releasing MediaPlayer
  * automatically when playback completes.
  */
-fun playCompletionSound(context: Context, soundResId: Int): MediaPlayer {
+fun playSound(context: Context, soundResId: Int): MediaPlayer {
     val mediaPlayer = MediaPlayer.create(context, soundResId)
     mediaPlayer.setOnCompletionListener { player -> player.release() }
     mediaPlayer.start()
     return mediaPlayer
+}
+
+/**
+ * Displays a list of sound options as radio buttons, calling [onSelect]
+ * with the tapped option's resource ID.
+ */
+@Composable
+fun SoundPicker(selectedResId: Int, onSelect: (Int) -> Unit) {
+    SOUNDS.forEach { (name, resId) ->
+        Row(
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            RadioButton(
+                selected = selectedResId == resId, onClick = {
+                    onSelect(resId)
+                })
+            Text(text = name)
+        }
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -71,7 +91,8 @@ class MainActivity : ComponentActivity() {
 
 /**
  * Displays the countdown timer, session controls (Start/Pause/Resume/End),
- * a session length picker, and a completion dialog when the countdown reaches zero.
+ * a session configuration dialog (length, optional start sound, completion sound),
+ * and a completion dialog when the countdown reaches zero.
  */
 @Composable
 fun TimerDisplay(modifier: Modifier = Modifier) {
@@ -94,8 +115,13 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
     // Tracks the currently playing preview sound (from the picker), so it can be stopped if the user picks another or closes the dialog
     var currentPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
 
-    var completionSoundResId by remember { mutableIntStateOf(COMPLETION_SOUNDS[0].second) } // User-configured completion sound
-    var tempSoundResId by remember(showDialog) { mutableIntStateOf(completionSoundResId) } // Temporary variable for picking completion sound
+    var endSoundResId by remember { mutableIntStateOf(SOUNDS[0].second) } // User-configured completion sound
+    var tempEndSoundResId by remember(showDialog) { mutableIntStateOf(endSoundResId) } // Temporary variable for picking completion sound
+
+    var startSoundEnabled by remember { mutableStateOf(false) } // Toggle for optional session start sound
+    var startSoundResId by remember { mutableIntStateOf(SOUNDS[0].second) } // User-configured start sound
+    var tempStartSoundEnabled by remember(showDialog) { mutableStateOf(startSoundEnabled) } // Temporary variable for start sound state (enabled/disabled)
+    var tempStartSoundResId by remember(showDialog) { mutableIntStateOf(startSoundResId) } // Temporary variable for picking start sound
 
     /**
      * Resets timer state to a fresh, unstarted session.
@@ -129,7 +155,7 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
 
         if (secondsRemaining == 0) {
             resetSession(true)
-            playCompletionSound(context, completionSoundResId)
+            playSound(context, endSoundResId)
         }
     }
 
@@ -145,6 +171,11 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
 
         Button(
             onClick = {
+                if (!hasStarted && startSoundEnabled) {
+                    currentPlayer = playSound(context, startSoundResId)
+                } else if (hasStarted && isRunning) {
+                    stopMediaPlayer()
+                }
                 isRunning = !isRunning
                 hasStarted = true
                 isSessionComplete = false
@@ -159,9 +190,10 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
         }
 
         Button(
-            onClick = { resetSession() },
-            enabled = hasStarted,
-            colors = ButtonDefaults.buttonColors(
+            onClick = {
+                resetSession()
+                stopMediaPlayer()
+            }, enabled = hasStarted, colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.error
             )
         ) {
@@ -192,18 +224,23 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
                         onValueChange = { tempSeconds = it.toInt() },
                         valueRange = 0f..59f
                     )
-                    Text("Completion Sound")
-                    COMPLETION_SOUNDS.forEach { (name, resId) ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = tempSoundResId == resId, onClick = {
-                                    stopMediaPlayer()
-                                    tempSoundResId = resId
-                                    currentPlayer = playCompletionSound(context, resId)
-                                })
-                            Text(text = name)
+                    Text("End Sound")
+                    SoundPicker(tempEndSoundResId) { resId ->
+                        stopMediaPlayer()
+                        tempEndSoundResId = resId
+                        currentPlayer = playSound(context, resId)
+                    }
+
+                    Text("Start Sound")
+                    Switch(
+                        checked = tempStartSoundEnabled,
+                        onCheckedChange = { tempStartSoundEnabled = it })
+
+                    if (tempStartSoundEnabled) {
+                        SoundPicker(tempStartSoundResId) { resId ->
+                            stopMediaPlayer()
+                            tempStartSoundResId = resId
+                            currentPlayer = playSound(context, resId)
                         }
                     }
                 }
@@ -212,7 +249,9 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
                     sessionLengthSeconds = toTotalSeconds(tempMinutes, tempSeconds)
                     secondsRemaining = sessionLengthSeconds
                     showDialog = false
-                    completionSoundResId = tempSoundResId
+                    endSoundResId = tempEndSoundResId
+                    startSoundResId = tempStartSoundResId
+                    startSoundEnabled = tempStartSoundEnabled
                     stopMediaPlayer()
                 }) {
                     Text("Confirm")
