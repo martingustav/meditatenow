@@ -37,6 +37,10 @@ import com.example.meditatenow.ui.theme.MeditateNowTheme
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
 
+enum class SessionState {
+    IDLE, COUNTDOWN_RUNNING, COUNTDOWN_PAUSED, SESSION_RUNNING, SESSION_PAUSED, SESSION_FINISHED
+}
+
 val SOUNDS = listOf(
     "Small Bell" to R.raw.small_bell,
     "Temple Bell" to R.raw.temple_bell,
@@ -96,18 +100,24 @@ class MainActivity : ComponentActivity() {
  */
 @Composable
 fun TimerDisplay(modifier: Modifier = Modifier) {
-    var hasStarted by remember { mutableStateOf(false) } // Keeps track of whether timer has been started yet
-    var isRunning by remember { mutableStateOf(false) } // Keeps track of whether timer is running right now
-    var isSessionComplete by remember { mutableStateOf(false) } // Keeps track of whether session is completed
+    var state by remember { mutableStateOf(SessionState.IDLE) }
 
-    var sessionLengthSeconds by remember { mutableIntStateOf(600) } // User-configured timer length
-    var secondsRemaining by remember { mutableIntStateOf(sessionLengthSeconds) } // Live timer countdown
+    var sessionLengthSeconds by remember { mutableIntStateOf(600) } // User-configured session length
+    var sessionSecondsRemaining by remember { mutableIntStateOf(sessionLengthSeconds) } // Live session countdown
 
-    var showDialog by remember { mutableStateOf(false) }
+    var showSessionConfigurationDialog by remember { mutableStateOf(false) }
 
-    // Temporary variables for picking timer length
-    var tempMinutes by remember(showDialog) { mutableIntStateOf(sessionLengthSeconds / 60) }
-    var tempSeconds by remember(showDialog) { mutableIntStateOf(sessionLengthSeconds % 60) }
+    // Temporary variables for picking session length
+    var tempSessionLengthMinutes by remember(showSessionConfigurationDialog) {
+        mutableIntStateOf(
+            sessionLengthSeconds / 60
+        )
+    }
+    var tempSessionLengthSeconds by remember(showSessionConfigurationDialog) {
+        mutableIntStateOf(
+            sessionLengthSeconds % 60
+        )
+    }
 
     // Current context which passes to sound player
     val context = LocalContext.current
@@ -116,24 +126,85 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
     var currentPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
 
     var endSoundResId by remember { mutableIntStateOf(SOUNDS[0].second) } // User-configured completion sound
-    var tempEndSoundResId by remember(showDialog) { mutableIntStateOf(endSoundResId) } // Temporary variable for picking completion sound
+    var tempEndSoundResId by remember(showSessionConfigurationDialog) {
+        mutableIntStateOf(
+            endSoundResId
+        )
+    } // Temporary variable for picking completion sound
 
     var startSoundEnabled by remember { mutableStateOf(false) } // Toggle for optional session start sound
-    var startSoundResId by remember { mutableIntStateOf(SOUNDS[0].second) } // User-configured start sound
-    var tempStartSoundEnabled by remember(showDialog) { mutableStateOf(startSoundEnabled) } // Temporary variable for start sound state (enabled/disabled)
-    var tempStartSoundResId by remember(showDialog) { mutableIntStateOf(startSoundResId) } // Temporary variable for picking start sound
+    var startSoundResId by remember { mutableIntStateOf(SOUNDS[0].second) } // User-configured session start sound
+    var tempStartSoundEnabled by remember(showSessionConfigurationDialog) {
+        mutableStateOf(
+            startSoundEnabled
+        )
+    } // Temporary variable for session start sound state (enabled/disabled)
+    var tempStartSoundResId by remember(showSessionConfigurationDialog) {
+        mutableIntStateOf(
+            startSoundResId
+        )
+    } // Temporary variable for picking session start sound
+
+    var countdownEnabled by remember { mutableStateOf(false) } // Toggle for optional session countdown
+    var tempCountdownEnabled by remember(showSessionConfigurationDialog) {
+        mutableStateOf(
+            countdownEnabled
+        )
+    } // Temporary variable for session countdown state (enabled/disabled)
+    var countdownLengthSeconds by remember { mutableIntStateOf(5) } // Session countdown length
+    var countdownSecondsRemaining by remember { mutableIntStateOf(countdownLengthSeconds) }
+    var tempCountdownLength by remember(showSessionConfigurationDialog) {
+        mutableIntStateOf(
+            countdownLengthSeconds
+        )
+    } // Temporary variable for picking session countdown length
+
+    /**
+     * Changes the state to pre-session countdown.
+     */
+    fun startCountdown() {
+        countdownSecondsRemaining = countdownLengthSeconds
+        state = SessionState.COUNTDOWN_RUNNING
+    }
+
+    /**
+     * Changes state to running,
+     * plays a start sound if enabled.
+     */
+    fun startSession() {
+        state = SessionState.SESSION_RUNNING
+
+        if (startSoundEnabled) {
+            playSound(context, startSoundResId)
+        }
+    }
+
+    /**
+     * Starts a pre-session countdown if enabled,
+     * then starts the main session.
+     */
+    fun start() {
+        if (countdownEnabled) {
+            startCountdown()
+        } else {
+            startSession()
+        }
+    }
+
+    /**
+     * Changes state to finished and plays the end sound.
+     */
+    fun finishSession() {
+        state = SessionState.SESSION_FINISHED
+        playSound(context, endSoundResId)
+    }
 
     /**
      * Resets timer state to a fresh, unstarted session.
-     * @param sessionComplete set true when resetting because the countdown
-     * finished naturally, so the completion dialog is shown; false (default)
-     * for a manual End, which resets silently.
      */
-    fun resetSession(sessionComplete: Boolean = false) {
-        isRunning = false
-        hasStarted = false
-        isSessionComplete = sessionComplete
-        secondsRemaining = sessionLengthSeconds
+    fun resetSession() {
+        state = SessionState.IDLE
+        sessionSecondsRemaining = sessionLengthSeconds
     }
 
     /**
@@ -146,16 +217,26 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
         currentPlayer = null
     }
 
-    // Restarts whenever isRunning changes; counts down while running and time remains
-    LaunchedEffect(isRunning) {
-        while (isRunning && secondsRemaining > 0) {
-            delay(1000.milliseconds)
-            secondsRemaining--
-        }
+    // Restarts whenever state changes
+    LaunchedEffect(state) {
+        when (state) {
+            SessionState.COUNTDOWN_RUNNING -> {
+                while (countdownSecondsRemaining > 0) {
+                    delay(1000.milliseconds)
+                    countdownSecondsRemaining--
+                }
+                startSession()
+            }
 
-        if (secondsRemaining == 0) {
-            resetSession(true)
-            playSound(context, endSoundResId)
+            SessionState.SESSION_RUNNING -> {
+                while (sessionSecondsRemaining > 0) {
+                    delay(1000.milliseconds)
+                    sessionSecondsRemaining--
+                }
+                finishSession()
+            }
+
+            else -> {} // Nothing to do for IDLE, PAUSED, or FINISHED states
         }
     }
 
@@ -165,26 +246,49 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
 
-        Text(
-            text = formatTime(secondsRemaining), fontSize = 64.sp, fontWeight = FontWeight.Bold
-        )
+        when (state) {
+            SessionState.COUNTDOWN_RUNNING, SessionState.COUNTDOWN_PAUSED -> {
+                Text(
+                    text = formatTime(countdownSecondsRemaining),
+                    fontSize = 64.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            SessionState.IDLE -> {
+                Text(
+                    formatTime(sessionLengthSeconds), fontSize = 64.sp, fontWeight = FontWeight.Bold
+                )
+            }
+
+            else -> {
+                Text(
+                    text = formatTime(sessionSecondsRemaining),
+                    fontSize = 64.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
 
         Button(
             onClick = {
-                if (!hasStarted && startSoundEnabled) {
-                    currentPlayer = playSound(context, startSoundResId)
-                } else if (hasStarted && isRunning) {
-                    stopMediaPlayer()
+                when (state) {
+                    SessionState.IDLE -> start()
+                    SessionState.SESSION_RUNNING -> state = SessionState.SESSION_PAUSED
+                    SessionState.SESSION_PAUSED -> state = SessionState.SESSION_RUNNING
+                    SessionState.SESSION_FINISHED -> {} // Dialog is showing; ignore button presses
+                    SessionState.COUNTDOWN_RUNNING -> state = SessionState.COUNTDOWN_PAUSED
+                    SessionState.COUNTDOWN_PAUSED -> state = SessionState.COUNTDOWN_RUNNING
                 }
-                isRunning = !isRunning
-                hasStarted = true
-                isSessionComplete = false
             }) {
             Text(
-                text = when {
-                    isRunning -> "Pause"
-                    !hasStarted -> "Start"
-                    else -> "Resume"
+                text = when (state) {
+                    SessionState.IDLE -> "Start"
+                    SessionState.SESSION_RUNNING -> "Pause"
+                    SessionState.SESSION_PAUSED -> "Resume"
+                    SessionState.SESSION_FINISHED -> "" // Show nothing
+                    SessionState.COUNTDOWN_RUNNING -> "Pause"
+                    SessionState.COUNTDOWN_PAUSED -> "Resume"
                 }
             )
         }
@@ -193,7 +297,7 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
             onClick = {
                 resetSession()
                 stopMediaPlayer()
-            }, enabled = hasStarted, colors = ButtonDefaults.buttonColors(
+            }, enabled = state != SessionState.IDLE, colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.error
             )
         ) {
@@ -201,29 +305,44 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
         }
 
         Button(
-            onClick = { showDialog = true }, enabled = !hasStarted
+            onClick = { showSessionConfigurationDialog = true },
+            enabled = state == SessionState.IDLE
         ) {
             Text("Configure Session")
         }
 
-        if (showDialog) {
+        if (showSessionConfigurationDialog) {
             AlertDialog(onDismissRequest = {
-                showDialog = false
+                showSessionConfigurationDialog = false
                 stopMediaPlayer()
             }, title = { Text("Configure Session") }, text = {
                 Column {
-                    Text("Minutes: $tempMinutes")
+                    Text("Minutes: $tempSessionLengthMinutes")
                     Slider(
-                        value = tempMinutes.toFloat(),
-                        onValueChange = { tempMinutes = it.toInt() },
+                        value = tempSessionLengthMinutes.toFloat(),
+                        onValueChange = { tempSessionLengthMinutes = it.toInt() },
                         valueRange = 0f..60f
                     )
-                    Text("Seconds: $tempSeconds")
+                    Text("Seconds: $tempSessionLengthSeconds")
                     Slider(
-                        value = tempSeconds.toFloat(),
-                        onValueChange = { tempSeconds = it.toInt() },
+                        value = tempSessionLengthSeconds.toFloat(),
+                        onValueChange = { tempSessionLengthSeconds = it.toInt() },
                         valueRange = 0f..59f
                     )
+                    Text("Countdown")
+                    Switch(
+                        checked = tempCountdownEnabled,
+                        onCheckedChange = { tempCountdownEnabled = it })
+
+                    if (tempCountdownEnabled) {
+                        Text("Seconds: $tempCountdownLength")
+                        Slider(
+                            value = tempCountdownLength.toFloat(),
+                            onValueChange = { tempCountdownLength = it.toInt() },
+                            valueRange = 0f..30f
+                        )
+                    }
+
                     Text("End Sound")
                     SoundPicker(tempEndSoundResId) { resId ->
                         stopMediaPlayer()
@@ -246,19 +365,22 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
                 }
             }, confirmButton = {
                 Button(onClick = {
-                    sessionLengthSeconds = toTotalSeconds(tempMinutes, tempSeconds)
-                    secondsRemaining = sessionLengthSeconds
-                    showDialog = false
+                    sessionLengthSeconds =
+                        toTotalSeconds(tempSessionLengthMinutes, tempSessionLengthSeconds)
+                    sessionSecondsRemaining = sessionLengthSeconds
+                    showSessionConfigurationDialog = false
                     endSoundResId = tempEndSoundResId
                     startSoundResId = tempStartSoundResId
                     startSoundEnabled = tempStartSoundEnabled
+                    countdownLengthSeconds = tempCountdownLength
+                    countdownEnabled = tempCountdownEnabled
                     stopMediaPlayer()
                 }) {
                     Text("Confirm")
                 }
             }, dismissButton = {
                 Button(onClick = {
-                    showDialog = false
+                    showSessionConfigurationDialog = false
                     stopMediaPlayer()
                 }) {
                     Text("Cancel")
@@ -266,12 +388,12 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
             })
         }
 
-        if (isSessionComplete) {
+        if (state == SessionState.SESSION_FINISHED) {
             AlertDialog(
-                onDismissRequest = { isSessionComplete = false },
+                onDismissRequest = { state = SessionState.IDLE },
                 text = { Text("Session complete") },
                 confirmButton = {
-                    Button(onClick = { isSessionComplete = false }) {
+                    Button(onClick = { state = SessionState.IDLE }) {
                         Text("Dismiss")
                     }
                 })
