@@ -246,29 +246,16 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
 
-        when (state) {
-            SessionState.COUNTDOWN_RUNNING, SessionState.COUNTDOWN_PAUSED -> {
-                Text(
-                    text = formatTime(countdownSecondsRemaining),
-                    fontSize = 64.sp,
-                    fontWeight = FontWeight.Bold
+        Text(
+            text = when (state) {
+                SessionState.COUNTDOWN_RUNNING, SessionState.COUNTDOWN_PAUSED -> formatTime(
+                    countdownSecondsRemaining
                 )
-            }
 
-            SessionState.IDLE -> {
-                Text(
-                    formatTime(sessionLengthSeconds), fontSize = 64.sp, fontWeight = FontWeight.Bold
-                )
-            }
-
-            else -> {
-                Text(
-                    text = formatTime(sessionSecondsRemaining),
-                    fontSize = 64.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+                SessionState.IDLE -> formatTime(sessionLengthSeconds)
+                else -> formatTime(sessionSecondsRemaining)
+            }, fontSize = 64.sp, fontWeight = FontWeight.Bold
+        )
 
         Button(
             onClick = {
