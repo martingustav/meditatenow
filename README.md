@@ -11,6 +11,8 @@ A simple meditation timer app for Android written in Kotlin, built as a learning
 - [x] Optional pre-session countdown
 - [ ] Session end system notification
 - [ ] Save and reuse session configurations
+- [ ] Reliable timer during background/app kill
+- [ ] Accessibility pass (content descriptions, screen reader support)
 - [ ] UI cleanup
 - [ ] Create app icon
 - [ ] Add app screenshots to repo
