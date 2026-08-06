@@ -1,11 +1,21 @@
 package com.example.meditatenow
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresPermission
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,10 +43,31 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.meditatenow.ui.theme.MeditateNowTheme
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
 
+/**
+ * Represents the app's session lifecycle; RUNNING and PAUSED
+ * states toggle back and forth within each phase before advancing:
+ * 1. IDLE, where no session is currently running.
+ * 2. (Optional) COUNTDOWN_RUNNING, where the optional
+ * pre-session countdown is currently running.
+ * 3. (Optional) COUNTDOWN_PAUSED, where the optional
+ * pre-session countdown is currently paused.
+ * 4. SESSION_RUNNING, where the main timer session is
+ * currently running.
+ * 5. SESSION_PAUSED, where the main timer session is
+ * currently paused.
+ * 6. SESSION_FINISHED, where the main timer session is
+ * finished and the in-app completion dialog and optional
+ * system completion notification are displayed.
+ */
 enum class SessionState {
     IDLE, COUNTDOWN_RUNNING, COUNTDOWN_PAUSED, SESSION_RUNNING, SESSION_PAUSED, SESSION_FINISHED
 }
@@ -47,6 +78,8 @@ val SOUNDS = listOf(
     "Tibetan Bell" to R.raw.tibetan_bell
 )
 
+const val NOTIFICATION_CHANNEL_ID = "session_complete_v2"
+
 /**
  * Plays the given sound resource once, releasing MediaPlayer
  * automatically when playback completes.
@@ -56,6 +89,33 @@ fun playSound(context: Context, soundResId: Int): MediaPlayer {
     mediaPlayer.setOnCompletionListener { player -> player.release() }
     mediaPlayer.start()
     return mediaPlayer
+}
+
+/**
+ * Sends a session completion system notification if the user has
+ * granted notification permissions. If not, it does nothing.
+ */
+@RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
+fun sendCompletionNotification(context: Context) {
+    val intent = Intent(context, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val pendingIntent = PendingIntent.getActivity(
+        context, 0, intent, PendingIntent.FLAG_IMMUTABLE
+    )
+
+    val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
+        .setSmallIcon(R.drawable.ic_launcher_foreground).setContentTitle("Session complete")
+        .setContentText("Your meditation session has finished.").setAutoCancel(true)
+        .setContentIntent(pendingIntent).build()
+
+    val notificationManager = NotificationManagerCompat.from(context)
+    if (ContextCompat.checkSelfPermission(
+            context, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    ) {
+        notificationManager.notify(1, notification)
+    }
 }
 
 /**
@@ -81,6 +141,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID, "Session Complete", NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            setSound(null, null)
+        }
+
+        val notificationManager = this.getSystemService(NotificationManager::class.java)
+        notificationManager.createNotificationChannel(channel)
         setContent {
             MeditateNowTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -95,8 +163,9 @@ class MainActivity : ComponentActivity() {
 
 /**
  * Displays the countdown timer, session controls (Start/Pause/Resume/End),
- * a session configuration dialog (length, optional start sound, completion sound),
- * and a completion dialog when the countdown reaches zero.
+ * a session configuration dialog (length, optional start sound, completion sound,
+ * optional pre-session countdown), an in-app completion dialog when the countdown
+ * reaches zero, and a system notification if app is backgrounded.
  */
 @Composable
 fun TimerDisplay(modifier: Modifier = Modifier) {
@@ -121,6 +190,9 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
 
     // Current context which passes to sound player
     val context = LocalContext.current
+
+    // Used to check whether the app is foregrounded, to decide whether to send a notification
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     // Tracks the currently playing preview sound (from the picker), so it can be stopped if the user picks another or closes the dialog
     var currentPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -159,6 +231,25 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
         )
     } // Temporary variable for picking session countdown length
 
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted -> }
+
+    /**
+     * Request notification permission if not granted and
+     * if Android API level is above 33 (Android 13).
+     */
+    fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val currentStatus = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            )
+            if (currentStatus != PackageManager.PERMISSION_GRANTED) {
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     /**
      * Changes the state to pre-session countdown.
      */
@@ -184,6 +275,7 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
      * then starts the main session.
      */
     fun start() {
+        requestNotificationPermissionIfNeeded()
         if (countdownEnabled) {
             startCountdown()
         } else {
@@ -192,11 +284,18 @@ fun TimerDisplay(modifier: Modifier = Modifier) {
     }
 
     /**
-     * Changes state to finished and plays the end sound.
+     * Changes state to finished, plays the end sound,
+     * and sends a system notification if the app is
+     * in the background.
      */
+    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
     fun finishSession() {
         state = SessionState.SESSION_FINISHED
         playSound(context, endSoundResId)
+        if (!lifecycleOwner.lifecycle.currentState.isAtLeast((Lifecycle.State.RESUMED))) {
+            sendCompletionNotification(context)
+        }
+        sessionSecondsRemaining = sessionLengthSeconds
     }
 
     /**
